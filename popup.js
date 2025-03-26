@@ -1,4 +1,4 @@
-// popup.js - Completely overhauled version with fixes
+// popup.js - Fixed version with key and message encryption/decryption fixes
 import createOQSModule from "./liboqs.js";
 import WaveClient from "./waveClient.js";
 
@@ -113,21 +113,34 @@ document.addEventListener("DOMContentLoaded", async function () {
     
     try {
       // Call the Kyber keypair generation function
-      const ret = oqs._OQS_KEM_kyber_512_keypair();
+      const pubKeySize = 800;
+      const secretKeySize = 1600;
+      
+      const publicKeyPtr = oqs._malloc(pubKeySize);
+      const secretKeyPtr = oqs._malloc(secretKeySize);
+      
+      const ret = oqs._OQS_KEM_kyber_512_keypair(publicKeyPtr, secretKeyPtr);
       if (ret !== 0) {
+        oqs._free(publicKeyPtr);
+        oqs._free(secretKeyPtr);
         throw new Error(`Keypair generation failed with error code ${ret}`);
       }
       
-      // For testing purposes, create dummy keys
-      // In production, we would use actual values from Kyber
-      const publicKey = crypto.getRandomValues(new Uint8Array(800));
-      const secretKey = crypto.getRandomValues(new Uint8Array(1600));
+      const publicKey = new Uint8Array(oqs.HEAPU8.buffer, publicKeyPtr, pubKeySize);
+      const secretKey = new Uint8Array(oqs.HEAPU8.buffer, secretKeyPtr, secretKeySize);
+      
+      // Make a copy of the data before freeing the memory
+      const publicKeyCopy = new Uint8Array(publicKey);
+      const secretKeyCopy = new Uint8Array(secretKey);
+      
+      oqs._free(publicKeyPtr);
+      oqs._free(secretKeyPtr);
       
       console.log("Keypair generated successfully");
       
       return {
-        publicKey: publicKey, 
-        secretKey: secretKey
+        publicKey: publicKeyCopy, 
+        secretKey: secretKeyCopy
       };
     } catch (error) {
       console.error("Error generating keypair:", error);
@@ -514,6 +527,7 @@ document.addEventListener("DOMContentLoaded", async function () {
       const tokenData = response.data;
       apiClient.setToken(tokenData.access_token);
       localStorage.setItem('wave_auth_token', tokenData.access_token);
+      localStorage.setItem('wave_username', username);
       
       currentUser = username;
       currentPassword = password;
@@ -610,6 +624,7 @@ document.addEventListener("DOMContentLoaded", async function () {
       const tokenData = response.data;
       apiClient.setToken(tokenData.access_token);
       localStorage.setItem('wave_auth_token', tokenData.access_token);
+      localStorage.setItem('wave_username', username);
       
       alert("Registration successful! You are now logged in.");
       currentUser = username;
@@ -729,6 +744,7 @@ document.addEventListener("DOMContentLoaded", async function () {
     }
   }
   
+  // Fixed loadPrivateKey function
   async function loadPrivateKey() {
     try {
       const response = await apiClient.getPrivateKey();
@@ -741,62 +757,53 @@ document.addEventListener("DOMContentLoaded", async function () {
       const data = response.data;
       const salt = base64ToBytes(data.salt);
       const encKey = base64ToBytes(data.encrypted_private_key);
-      const iv = salt; // Using salt as IV.
-      console.log("loadPrivateKey: salt length =", salt.length, "iv length =", iv.length, "ciphertext length =", encKey.length);
-    
+      
+      // Using consistent key derivation
       try {
-        const derivedKey = await deriveAesKeyFromPassword(currentPassword, salt);
-        currentPrivateKey = await aesGcmDecrypt(derivedKey, iv, encKey);
-        if (!currentPrivateKey) {
-          throw new Error("Decryption returned null, possibly due to an incorrect password.");
-        }
-        console.log("Private key decrypted successfully");
+        // Create consistent key material
+        const encoder = new TextEncoder();
+        const keyMaterial = await crypto.subtle.importKey(
+          "raw",
+          encoder.encode(currentPassword),
+          { name: "PBKDF2" },
+          false,
+          ["deriveBits", "deriveKey"]
+        );
+        
+        // Derive the key using same parameters as during registration
+        const derivedKey = await crypto.subtle.deriveKey(
+          { name: "PBKDF2", salt: salt, iterations: 100000, hash: "SHA-256" },
+          keyMaterial,
+          { name: "AES-GCM", length: 256 },
+          false,
+          ["decrypt"]
+        );
+        
+        // Use salt as IV, consistent with registration
+        const iv = salt;
+        
+        // Decrypt the private key
+        const plainBuffer = await crypto.subtle.decrypt(
+          { name: "AES-GCM", iv: iv, tagLength: 128 },
+          derivedKey,
+          encKey
+        );
+        
+        currentPrivateKey = new Uint8Array(plainBuffer);
+        console.log("Private key decrypted successfully, length:", currentPrivateKey.length);
       } catch (e) {
+        console.error("Failed to decrypt private key:", e);
         alert("Failed to decrypt private key. Please check your password.");
         currentPassword = prompt("Enter your password to unlock your account:");
         if (currentPassword) {
-          const derivedKey = await deriveAesKeyFromPassword(currentPassword, salt);
-          currentPrivateKey = await aesGcmDecrypt(derivedKey, iv, encKey);
-          if (!currentPrivateKey) {
-            alert("Decryption failed again. Please try re-logging in.");
-          }
+          return loadPrivateKey(); // Try again with new password
+        } else {
+          throw new Error("Password required to decrypt private key");
         }
       }
     } catch (error) {
       console.error("Load private key failed:", error);
       alert("Failed to load private key: " + error.message);
-    }
-  }
-  
-  async function deriveAesKeyFromPassword(password, salt) {
-    const encoder = new TextEncoder();
-    const keyMaterial = await crypto.subtle.importKey(
-      "raw",
-      encoder.encode(password),
-      { name: "PBKDF2" },
-      false,
-      ["deriveBits", "deriveKey"]
-    );
-    return crypto.subtle.deriveKey(
-      { name: "PBKDF2", salt: salt, iterations: 100000, hash: "SHA-256" },
-      keyMaterial,
-      { name: "AES-GCM", length: 256 },
-      false,
-      ["decrypt"]
-    );
-  }
-  
-  async function aesGcmDecrypt(aesKey, iv, ciphertext) {
-    try {
-      const plainBuffer = await crypto.subtle.decrypt(
-        { name: "AES-GCM", iv: iv, tagLength: 128 },
-        aesKey,
-        ciphertext
-      );
-      return new Uint8Array(plainBuffer);
-    } catch (e) {
-      console.error("AES-GCM decryption failed:", e);
-      return null;
     }
   }
   
@@ -849,7 +856,6 @@ document.addEventListener("DOMContentLoaded", async function () {
     }
   }
   
-  // UPDATED: renderContacts with avatars
   function renderContacts() {
     contactsDiv.innerHTML = "";
     for (const pubKey in contactsMap) {
@@ -914,7 +920,6 @@ document.addEventListener("DOMContentLoaded", async function () {
     }
   }
   
-  // UPDATED: populateContactDropdown with avatars
   function populateContactDropdown() {
     const partners = new Set();
     for (const msg of allMessages) {
@@ -1027,12 +1032,16 @@ document.addEventListener("DOMContentLoaded", async function () {
     messagesDiv.scrollTop = messagesDiv.scrollHeight;
   }
   
-  // MODIFIED: This function now correctly handles whether the current user
-  // is the sender or recipient and uses the appropriate encryption fields
+  // Fixed message decryption function
   async function decryptPQMessage(msg) {
     if (!oqs) {
       console.warn("OQS library is still loading. Retrying decryption later...");
       return "[Encrypted message]";
+    }
+    
+    if (!currentPrivateKey) {
+      console.warn("Private key not loaded yet. Can't decrypt messages.");
+      return "[Encrypted message - private key not loaded]";
     }
     
     try {
@@ -1044,7 +1053,7 @@ document.addEventListener("DOMContentLoaded", async function () {
       
       if (isSender) {
         // For messages sent by the current user, use the sender_ fields
-        if (!currentPrivateKey || !msg.sender_ciphertext_kem || !msg.sender_ciphertext_msg || !msg.sender_nonce) {
+        if (!msg.sender_ciphertext_kem || !msg.sender_ciphertext_msg || !msg.sender_nonce) {
           console.warn("Decryption failed for sent message: Missing required parameters.");
           return "[Encrypted message (sent)]";
         }
@@ -1054,7 +1063,7 @@ document.addEventListener("DOMContentLoaded", async function () {
         ciphertextBytes = base64ToBytes(msg.sender_ciphertext_msg);
       } else {
         // For messages received by the current user, use the regular fields
-        if (!currentPrivateKey || !msg.ciphertext_kem || !msg.ciphertext_msg || !msg.nonce) {
+        if (!msg.ciphertext_kem || !msg.ciphertext_msg || !msg.nonce) {
           console.warn("Decryption failed for received message: Missing required parameters.");
           return "[Encrypted message (received)]";
         }
@@ -1066,11 +1075,14 @@ document.addEventListener("DOMContentLoaded", async function () {
 
       console.log("Decrypting message with:", {
         isSender: isSender,
-        ciphertextKem: bytesToBase64(ciphertextKem),
-        nonceBytes: bytesToBase64(nonceBytes),
-        ciphertextBytes: bytesToBase64(ciphertextBytes),
+        msgId: msg.message_id,
+        privateKeyLength: currentPrivateKey.length,
+        ciphertextKemLength: ciphertextKem.length,
+        nonceLength: nonceBytes.length,
+        ciphertextLength: ciphertextBytes.length
       });
 
+      // Use OQS to derive shared secret from KEM ciphertext
       let kem;
       let sharedSecret;
       try {
@@ -1083,59 +1095,30 @@ document.addEventListener("DOMContentLoaded", async function () {
         }
       }
 
-      console.log("Derived shared secret:", bytesToBase64(sharedSecret));
-
-      const plaintextBuffer = await aesGcmDecryptJS(sharedSecret, nonceBytes, ciphertextBytes);
+      // Use WebCrypto to decrypt the message with the shared secret
+      const key = await crypto.subtle.importKey(
+        "raw",
+        sharedSecret,
+        { name: "AES-GCM" },
+        false,
+        ["decrypt"]
+      );
+      
+      const plaintextBuffer = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: nonceBytes, tagLength: 128 },
+        key,
+        ciphertextBytes
+      );
 
       if (!plaintextBuffer) {
-        console.warn("Decryption failed: AES-GCM returned null.");
+        console.warn("Decryption failed: Null plaintext.");
         return "[Decryption failed]";
       }
 
       return new TextDecoder().decode(plaintextBuffer);
     } catch (err) {
-      console.warn("Decapsulation failed:", err);
+      console.warn("Message decryption failed:", err);
       return "[Decryption error]";
-    }
-  }
-  
-  // MODIFIED: Enhanced debugging for AES-GCM decryption
-  async function aesGcmDecryptJS(keyBytes, ivBytes, ciphertext) {
-    try {
-      if (!keyBytes || !ivBytes || !ciphertext) {
-        throw new Error("Decryption failed: Missing key, IV, or ciphertext.");
-      }
-      if (![16, 24, 32].includes(keyBytes.length)) {
-        throw new Error("Invalid AES key length: " + keyBytes.length);
-      }
-      console.log("AES-GCM Decryption Inputs:", {
-        key_length: keyBytes.length,
-        iv_length: ivBytes.length,
-        ciphertext_length: ciphertext.length,
-        key: bytesToBase64(keyBytes),
-        iv: bytesToBase64(ivBytes),
-        ciphertext: bytesToBase64(ciphertext),
-      });
-      const key = await crypto.subtle.importKey(
-        "raw",
-        keyBytes,
-        { name: "AES-GCM" },
-        false,
-        ["decrypt"]
-      );
-      const decrypted = await crypto.subtle.decrypt(
-        { name: "AES-GCM", iv: ivBytes, tagLength: 128 },
-        key,
-        ciphertext
-      );
-      console.log("Decryption successful, plaintext length:", decrypted.byteLength);
-      return new Uint8Array(decrypted);
-    } catch (e) {
-      console.error("AES-GCM decryption failed:", e);
-      if (e instanceof DOMException) {
-        console.error("Browser crypto API error:", e.name, e.message);
-      }
-      return null;
     }
   }
   
@@ -1163,6 +1146,7 @@ document.addEventListener("DOMContentLoaded", async function () {
       // Always clear local state
       apiClient.clearToken();
       localStorage.removeItem('wave_auth_token');
+      localStorage.removeItem('wave_username');
       
       currentUser = null;
       currentPassword = null;
@@ -1183,6 +1167,7 @@ document.addEventListener("DOMContentLoaded", async function () {
       // Still clear local state on error
       apiClient.clearToken();
       localStorage.removeItem('wave_auth_token');
+      localStorage.removeItem('wave_username');
       
       currentUser = null;
       currentPassword = null;
@@ -1242,11 +1227,5 @@ document.addEventListener("DOMContentLoaded", async function () {
     
     // No valid session, show login
     showSection(authContainer);
-  }
-  
-  // Add token and username to storage after login and registration
-  function saveUserSession(username, token) {
-    localStorage.setItem('wave_auth_token', token);
-    localStorage.setItem('wave_username', username);
   }
 });
