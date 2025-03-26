@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Wave PQ Messaging</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div class="header__title-container">
+      <div class="header__title-row">
+        <img src="Wave.svg" alt="Wave Logo" class="header__logo-wave">
+        <h1 class="header__title">Wave</h1>
+      </div>
+    </div>
+    <p class="header__subtitle">Your Post Quantum Messaging App</p>
+  </header>
+
+  <nav>
+    <ul class="nav__links">
+      <li><a href="#" id="tab-contacts" class="nav-link active">Contacts</a></li>
+      <li><a href="#" id="tab-chat" class="nav-link">Chat</a></li>
+      <li><a href="#" id="tab-settings" class="nav-link">Settings</a></li>
+      <li>
+        <a href="#" id="logout-btn" class="logout-button" title="Logout">
+          <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
+            <path fill="currentColor"
+              d="M10.09 15.59L11.5 17l5-5-5-5-1.41 1.41L12.67 11H3v2h9.67l-2.58 2.59zM20 19h-8v2h8c1.1 
+              0 2-.9 2-2V5c0-1.1-.9-2-2-2h-8v2h8v14z"/>
+          </svg>
+        </a>
+      </li>
+    </ul>
+  </nav>
+
+  <div id="user-label" class="user-info"></div>
+
+  <main>
+    <!-- AUTH SECTION -->
+    <section id="auth-container">
+      <h2>Login</h2>
+      <div class="content-section">
+        <div class="auth-group">
+          <input type="text" id="login-username" placeholder="Username">
+          <input type="password" id="login-password" placeholder="Password">
+          <button id="login-btn" class="button">Login</button>
+        </div>
+      </div>
+
+      <hr class="divider">
+
+      <div class="content-section">
+        <h2>Register</h2>
+        <input type="text" id="reg-username" placeholder="New Username">
+        <input type="password" id="reg-password" placeholder="New Password">
+        <button id="register-btn" class="button">Register</button>
+      </div>
+
+      <hr class="divider">
+
+      <div class="content-section">
+        <h2>Recover Account</h2>
+        <div class="warning-box">
+          <p>
+            If you have a backup file containing your public and encrypted private keys,
+            enter your username and select the backup file below to restore your account.
+          </p>
+        </div>
+        <input type="text" id="recover-username" placeholder="Username">
+        <input type="file" id="backup-file-input" accept=".json">
+        <button id="recover-account-btn" class="button">Recover Account</button>
+      </div>
+    </section>
+
+    <!-- CONTACTS -->
+    <section id="contacts-container" class="hidden">
+      <h2>Contacts</h2>
+      
+      <div class="content-section">
+        <h3>Add Contact</h3>
+        <div class="contacts-input-group">
+          <input type="text" id="contact-public-key" placeholder="Contact's Public Key (Base64)">
+          <input type="text" id="contact-nickname" placeholder="Contact's Label">
+          <button id="add-contact-btn" class="button">Add Contact</button>
+        </div>
+      </div>
+      
+      <div class="content-section">
+        <h3>Your Contacts</h3>
+        <ul id="contacts" class="contact-list"></ul>
+      </div>
+    </section>
+
+    <!-- CHAT -->
+    <section id="chat-container" class="hidden">
+      <h2>Chat</h2>
+      
+      <div class="content-section">
+        <label for="contact-select">Select a contact:</label>
+        <select id="contact-select">
+          <option value="">Select a contact...</option>
+        </select>
+        <div id="messages" class="chat-box">Select a contact to see messages.</div>
+        <div class="message-input">
+          <textarea id="message-text" placeholder="Type a message..."></textarea>
+          <button id="send-message-btn" class="button">Send</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section id="settings-container" class="hidden">
+      <h2>Settings</h2>
+
+      <!-- PUBLIC KEY -->
+      <div class="settings-section">
+        <h3>Your Public Key</h3>
+        <div id="public-key-container">
+          <textarea id="public-key-display" readonly></textarea>
+          <button id="copy-key-btn" class="button" title="Copy to clipboard">Copy</button>
+        </div>
+      </div>
+
+      <!-- BACKUP -->
+      <div class="settings-section">
+        <h3>Backup Account</h3>
+        <div class="warning-box">
+          <p>
+            Keep this file safe. It contains your public + private keys.<br>
+            <span style="font-size: 11px; color: var(--text-muted);">Access is lost if it's compromised or deleted.</span>
+          </p>
+        </div>
+        <button id="backup-account-btn" class="button" title="Download your encrypted backup">Backup Account</button>
+      </div>
+
+      <!-- DELETE -->
+      <div class="settings-section">
+        <h3>Account Management</h3>
+        <button id="cancel-account-btn" class="button danger" title="Delete your account (cannot be undone)">Delete Account</button>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="footer-text">
+      Powered by <img src="Flux_white_symbol.png" alt="Flux Logo">
+    </div>
+  </footer>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

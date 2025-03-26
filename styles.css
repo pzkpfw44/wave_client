@@ -1,0 +1,596 @@
+/* ======================================================================
+   Wave Secure Messaging - Final Polished UI with Consistent Styling
+   ====================================================================== */
+   
+/* Base styles */
+:root {
+  /* Main colors */
+  --primary: #4a90e2;
+  --accent: #7b61ff;
+  --bg-dark: #121212;
+  --bg-darker: #0f0f1a;
+  --bg-panel: #1b1b2f;
+  --bg-input: #1d1e26;
+  --text-primary: #ffffff;
+  --text-secondary: #aaaaaa;
+  --text-muted: #777777;
+  --danger: #ff3b30;
+  --warning: #ff9500;
+  
+  /* Spacing - adjusted for better padding */
+  --spacing-xs: 3px;
+  --spacing-sm: 6px;
+  --spacing: 12px;
+  --spacing-lg: 18px;
+  --lateral-padding: 20px;
+  
+  /* Other */
+  --border-radius: 8px;
+  --transition: 0.3s ease;
+  
+  /* Fixed heights for better layout control */
+  --header-height: 75px; /* Reduced height */
+  --nav-height: 42px; /* Slightly smaller */
+  --status-height: 24px;
+  --footer-height: 40px; /* Slightly smaller */
+  --input-area-height: 50px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* Allow vertical scrolling if content overflows */
+html, body {
+  width: 440px;
+  height: 580px; /* Keep the popup size but enable vertical scrolling */
+  font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: linear-gradient(135deg, var(--bg-dark), #1a1a2e);
+  overflow-y: auto; /* Changed from hidden to auto for vertical scroll */
+  overflow-x: hidden; /* Hide horizontal scroll */
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Headers */
+h1, h2, h3 {
+  font-weight: 600;
+  margin-bottom: var(--spacing-sm);
+}
+
+/* Layout */
+header {
+  background: var(--bg-darker);
+  padding: var(--spacing-xs) var(--lateral-padding); /* Reduced padding */
+  text-align: center;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+  height: var(--header-height);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.header__title-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.header__logo-wave {
+  height: 24px; /* Slightly smaller */
+  filter: drop-shadow(0 0 8px rgba(74, 144, 226, 0.5));
+}
+
+.header__title {
+  font-size: 26px; /* Slightly smaller */
+  color: var(--primary);
+  text-shadow: 0 0 10px rgba(74, 144, 226, 0.5);
+  margin: 0;
+  font-weight: 700;
+}
+
+.header__subtitle {
+  font-size: 12px; /* Slightly smaller */
+  color: var(--text-secondary);
+  margin-top: var(--spacing-xs);
+}
+
+/* Navigation with correctly positioned logout button */
+nav {
+  background: var(--bg-darker);
+  border-bottom: 1px solid rgba(74, 144, 226, 0.2);
+  height: var(--nav-height);
+  position: relative;
+  padding: 0 var(--lateral-padding);
+}
+
+.nav__links {
+  display: flex;
+  align-items: center;
+  list-style: none;
+  justify-content: center;
+  height: 100%;
+  width: 100%;
+  position: relative;
+}
+
+.nav-link {
+  display: block;
+  color: var(--text-primary);
+  text-decoration: none;
+  font-weight: 600;
+  padding: var(--spacing-sm) var(--spacing-lg);
+  position: relative;
+  transition: var(--transition);
+}
+
+.nav-link::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--primary), var(--accent));
+  transition: width var(--transition);
+  border-radius: var(--border-radius) var(--border-radius) 0 0;
+}
+
+.nav-link:hover::after,
+.nav-link.active::after {
+  width: 70%;
+}
+
+.nav-link:hover,
+.nav-link.active {
+  color: var(--primary);
+}
+
+/* Properly positioned logout button */
+.logout-button {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--text-primary);
+  transition: var(--transition);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.logout-button:hover {
+  color: var(--danger);
+}
+
+.user-info {
+  background: rgba(15, 15, 26, 0.6);
+  color: var(--text-secondary);
+  font-size: 14px;
+  text-align: center;
+  padding: var(--spacing-xs);
+  height: var(--status-height);
+  line-height: 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05); /* Added subtle border */
+}
+
+/* Main content layout */
+main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  height: calc(100% - var(--header-height) - var(--nav-height) - var(--status-height) - var(--footer-height));
+  overflow: hidden; /* We'll control overflow inside sections */
+}
+
+section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: var(--spacing) var(--lateral-padding);
+  animation: fadeIn 0.3s ease;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow-y: auto; /* Changed from hidden to auto to enable scrolling in all sections */
+}
+
+section > h2 {
+  margin-bottom: var(--spacing);
+  font-size: 24px;
+  color: var(--text-primary); /* Ensure main heading is white */
+}
+
+/* Section headers - standardized for all areas - Made all section headings match primary color */
+section h3, 
+.content-section > h2,
+#contacts-container h3, 
+#settings-container h3,
+#auth-container .content-section > h2 {
+  margin-top: var(--spacing);
+  margin-bottom: var(--spacing);
+  color: var(--primary);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* Forms and inputs */
+input, select, textarea, select.form-control {
+  width: 100%;
+  padding: var(--spacing-sm) var(--spacing);
+  margin-bottom: var(--spacing);
+  border-radius: var(--border-radius);
+  border: 1px solid rgba(74, 144, 226, 0.3);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 16px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+input:focus,
+select:focus,
+textarea:focus,
+select.form-control:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(74, 144, 226, 0.25);
+}
+
+button {
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  border: none;
+  padding: 10px 14px; /* Slightly smaller to match tidy layout */
+  border-radius: var(--border-radius);
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+  width: 100%;
+}
+
+button:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 15px rgba(123, 97, 255, 0.4);
+}
+
+button.danger {
+  background: linear-gradient(135deg, #e23e3e, var(--danger));
+}
+
+/* Contact removal button */
+.remove-contact-btn {
+  background: var(--danger);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  width: auto;
+}
+
+/* Content section - standardized for each tab */
+.content-section {
+  margin-bottom: var(--spacing);
+  padding-bottom: var(--spacing);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  width: 100%;
+}
+
+.content-section:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+/* Chat layout */
+.chat-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.chat-box {
+  flex: 1;
+  background: rgba(18, 18, 29, 0.7);
+  padding: var(--spacing);
+  border-radius: var(--border-radius);
+  overflow-y: auto;
+  margin-bottom: var(--spacing-sm);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Common scrollbar styling for all scrollable areas */
+.chat-box::-webkit-scrollbar,
+#contacts-container::-webkit-scrollbar,
+#settings-container::-webkit-scrollbar,
+#auth-container::-webkit-scrollbar,
+section::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chat-box::-webkit-scrollbar-track,
+#contacts-container::-webkit-scrollbar-track,
+#settings-container::-webkit-scrollbar-track,
+#auth-container::-webkit-scrollbar-track,
+section::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: var(--border-radius);
+}
+
+.chat-box::-webkit-scrollbar-thumb,
+#contacts-container::-webkit-scrollbar-thumb,
+#settings-container::-webkit-scrollbar-thumb,
+#auth-container::-webkit-scrollbar-thumb,
+section::-webkit-scrollbar-thumb {
+  background-color: var(--accent);
+  border-radius: 10px;
+}
+
+/* Message bubbles */
+.message {
+  padding: var(--spacing);
+  margin-bottom: var(--spacing-sm);
+  border-radius: var(--border-radius);
+  max-width: 85%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.message.sent {
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  color: white;
+  margin-left: auto;
+  border-bottom-right-radius: 0;
+}
+
+.message.received {
+  background: linear-gradient(135deg, var(--bg-panel), #2a2a5a);
+  margin-right: auto;
+  border-bottom-left-radius: 0;
+}
+
+/* Timestamp styling */
+.timestamp {
+  font-size: 0.7em;
+  color: rgba(255, 255, 255, 0.6);
+  margin-top: var(--spacing-xs);
+  text-align: right;
+  font-style: italic;
+}
+
+/* Message input area */
+.message-input {
+  display: flex;
+  align-items: stretch;
+  gap: var(--spacing-sm);
+  height: var(--input-area-height);
+  min-height: var(--input-area-height);
+  margin-top: auto;
+}
+
+.message-input textarea {
+  flex: 1;
+  margin-bottom: 0;
+  border-radius: var(--border-radius) 0 0 var(--border-radius);
+  resize: none;
+  padding: 12px;
+}
+
+.message-input button {
+  width: 80px;
+  padding: 0;
+  margin: 0;
+  border-radius: 0 var(--border-radius) var(--border-radius) 0;
+  height: auto;
+}
+
+/* Contacts section - improved styling */
+#contacts-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto !important;
+  padding-right: calc(var(--lateral-padding) - 6px);
+}
+
+.contacts-input-group {
+  margin-bottom: var(--spacing);
+  padding-bottom: var(--spacing);
+  width: 100%;
+}
+
+.contact-list {
+  list-style: none;
+  overflow-y: auto;
+  flex: 1;
+  margin-top: var(--spacing-sm);
+}
+
+.contact-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-sm) var(--spacing);
+  background: rgba(27, 27, 47, 0.5);
+  border-radius: var(--border-radius);
+  margin-bottom: var(--spacing-sm);
+  transition: background-color 0.2s ease, transform 0.2s ease;
+}
+
+.contact-item:hover {
+  background: rgba(27, 27, 47, 0.8);
+  transform: translateX(2px);
+}
+
+.contact-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  color: white;
+  margin-right: var(--spacing-sm);
+  background-color: #ff5733;
+  text-transform: uppercase;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Settings section with scrolling */
+#settings-container {
+  overflow-y: auto !important; /* Force vertical scrollbar */
+  padding-right: calc(var(--lateral-padding) - 6px); /* Adjust padding to accommodate scrollbar */
+}
+
+/* Authentication container with scrolling - Updated */
+#auth-container {
+  overflow-y: auto !important;
+  padding-right: calc(var(--lateral-padding) - 6px);
+}
+
+/* Section dividers - now used consistently */
+.settings-section {
+  margin-bottom: var(--spacing);
+  padding-bottom: var(--spacing);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  width: 100%;
+}
+
+.settings-section:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+/* Public key display - MODIFIED to be above button */
+#public-key-container {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-input);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--border-radius);
+  padding: 6px 10px;
+  margin-bottom: var(--spacing);
+}
+
+#public-key-display {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  white-space: normal;
+  overflow-x: hidden;
+  padding: 6px;
+  font-size: 12px;
+  height: auto;
+  min-height: 60px;
+  margin-bottom: var(--spacing-sm);
+}
+
+#copy-key-btn {
+  align-self: center;
+  width: 100%;
+}
+
+/* Chat section styling improvements */
+#chat-container {
+  overflow-y: auto !important;
+  padding-right: calc(var(--lateral-padding) - 6px);
+}
+
+#chat-container label {
+  margin-bottom: var(--spacing-xs);
+  display: block;
+}
+
+#chat-container select {
+  margin-bottom: var(--spacing);
+}
+
+/* Standard info/warning box styling */
+.info-box, .warning-box, .recover-description {
+  background-color: rgba(255, 149, 0, 0.25);
+  border-left: 4px solid var(--warning);
+  padding: 8px 12px;
+  margin-bottom: var(--spacing);
+  border-radius: 0 var(--border-radius) var(--border-radius) 0;
+}
+
+.info-box p, .warning-box p, .recover-description {
+  margin: 0;
+  font-weight: normal;
+  font-size: 13px;
+  color: var(--warning);
+  line-height: 1.4;
+}
+
+/* Footer */
+footer {
+  height: var(--footer-height);
+  background: var(--bg-darker);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--lateral-padding);
+}
+
+.footer-text {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: white;
+  font-weight: bold;
+}
+
+.footer-text img {
+  height: 22px; /* Slightly smaller */
+  margin-left: 10px;
+}
+
+/* Divider - Improved visibility */
+.divider {
+  position: relative;
+  text-align: center;
+  margin: var(--spacing) 0;
+  height: 1px;
+}
+
+.divider::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 100%;
+  height: 1px;
+  background: linear-gradient(to right, transparent, rgba(74, 144, 226, 0.4), transparent);
+}
+
+/* Placeholder styling */
+::placeholder {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+/* Simple fade-in animation */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
