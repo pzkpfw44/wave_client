@@ -13,6 +13,72 @@ let allMessages = [];
 let contactsMap = {};         // { publicKey: { nickname } }
 let selectedContact = null;   // The recipient's public key (base64)
 
+async function ensureOQSLoaded() {
+  // Check if OQS is already loaded
+  if (window.oqs) {
+    console.log("OQS library already loaded");
+    return window.oqs;
+  }
+  
+  console.log("OQS library not detected, attempting to initialize...");
+  
+  // Check if createOQSModule function exists
+  if (typeof createOQSModule !== 'function') {
+    console.error("createOQSModule function not found!");
+    
+    // Check if the script is loaded
+    const scriptLoaded = Array.from(document.getElementsByTagName('script'))
+      .some(script => script.src && script.src.includes('liboqs.js'));
+    
+    if (!scriptLoaded) {
+      console.log("Loading liboqs.js script...");
+      
+      // Dynamically load the script
+      return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'liboqs.js';
+        script.type = 'module';
+        script.onload = async () => {
+          try {
+            if (typeof createOQSModule === 'function') {
+              window.oqs = await createOQSModule();
+              console.log("OQS library successfully loaded");
+              resolve(window.oqs);
+            } else {
+              reject(new Error("createOQSModule function not found after script load"));
+            }
+          } catch (error) {
+            reject(error);
+          }
+        };
+        script.onerror = () => reject(new Error("Failed to load liboqs.js script"));
+        document.head.appendChild(script);
+      });
+    } else {
+      throw new Error("liboqs.js script is loaded but createOQSModule function is not defined");
+    }
+  }
+  
+  // Initialize OQS module
+  try {
+    console.log("Initializing OQS module...");
+    window.oqs = await createOQSModule();
+    console.log("OQS library successfully initialized");
+    return window.oqs;
+  } catch (error) {
+    console.error("Failed to initialize OQS module:", error);
+    throw error;
+  }
+}
+
+// When the document is loaded, try to preload OQS
+document.addEventListener("DOMContentLoaded", () => {
+  // Attempt to load OQS early
+  ensureOQSLoaded().catch(err => {
+    console.warn("Early OQS loading failed, will retry when needed:", err);
+  });
+});
+
 // Debug mode
 const DEBUG_MODE = true;
 function debugLog(...args) {
@@ -34,9 +100,8 @@ document.addEventListener("DOMContentLoaded", async function () {
   
   // Initialize the OQS WASM Module
   try {
-    debugLog("OQS", "Starting OQS WASM library initialization");
-    oqs = await createOQSModule();
-    debugLog("OQS", "OQS WASM library loaded successfully");
+    oqs = await ensureOQSLoaded();
+    console.log("OQS WASM library loaded successfully");
   } catch (error) {
     console.error("Failed to initialize the OQS library:", error);
     alert("Error loading encryption modules. See console for details.");
@@ -720,11 +785,11 @@ document.addEventListener("DOMContentLoaded", async function () {
     registerBtn.disabled = true;
     
     try {
-      debugLog("Starting registration process for user:", username);
+      console.log("Starting registration process for user:", username);
       
       // Generate a secure salt for key derivation
       const salt = crypto.getRandomValues(new Uint8Array(16));
-      debugLog("Generated salt:", {
+      console.log("Salt generated:", {
         length: salt.length,
         preview: Array.from(salt.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join('')
       });
@@ -734,13 +799,22 @@ document.addEventListener("DOMContentLoaded", async function () {
       try {
         const kem = new oqs.KeyEncapsulation("Kyber512");
         keypair = await kem.generate_keypair();
-        debugLog("Generated Kyber keypair", {
+        console.log("Generated Kyber keypair", {
           publicKeyLength: keypair.publicKey.length,
           secretKeyLength: keypair.secretKey.length
         });
       } catch (kpErr) {
-        debugLog("Error generating keypair:", kpErr);
+        console.error("Error generating keypair:", kpErr);
         throw new Error("Failed to generate cryptographic keys: " + kpErr.message);
+      }
+      
+      // Validate key sizes before proceeding
+      if (keypair.publicKey.length < 800 || keypair.publicKey.length > 1000) {
+        throw new Error(`Public key size (${keypair.publicKey.length} bytes) is outside allowed range (800-1000 bytes)`);
+      }
+      
+      if (keypair.secretKey.length < 1200 || keypair.secretKey.length > 1600) {
+        throw new Error(`Secret key size (${keypair.secretKey.length} bytes) is outside allowed range (1200-1600 bytes)`);
       }
       
       // Derive key for private key encryption
@@ -766,13 +840,16 @@ document.addEventListener("DOMContentLoaded", async function () {
         ["encrypt"]
       );
       
-      // Encrypt the private key
-      const iv = salt.slice(0, 12); // Use first 12 bytes of salt as IV
-      debugLog("Using IV for encryption:", {
+      // Use exactly 12 bytes for the IV (AES-GCM requirement)
+      const iv = new Uint8Array(12);
+      iv.set(salt.slice(0, 12));
+      
+      console.log("Using IV for encryption:", {
         length: iv.length,
         preview: Array.from(iv).map(b => b.toString(16).padStart(2, '0')).join('')
       });
       
+      // Encrypt the private key with AES-GCM
       const encryptedPrivateKey = await crypto.subtle.encrypt(
         { name: "AES-GCM", iv: iv },
         derivedKey,
@@ -781,7 +858,13 @@ document.addEventListener("DOMContentLoaded", async function () {
       
       // Convert to Uint8Array for API submission
       const encryptedBytes = new Uint8Array(encryptedPrivateKey);
-      debugLog("Encrypted private key:", {
+      
+      // Check if the encrypted key is within acceptable size limits
+      if (encryptedBytes.length < 1200 || encryptedBytes.length > 1600) {
+        console.warn(`Encrypted private key size (${encryptedBytes.length} bytes) is outside allowed range (1200-1600 bytes)`);
+      }
+      
+      console.log("Encrypted private key:", {
         length: encryptedBytes.length,
         preview: Array.from(encryptedBytes.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join('')
       });
@@ -791,7 +874,7 @@ document.addEventListener("DOMContentLoaded", async function () {
       const base64EncryptedPrivateKey = bytesToBase64(encryptedBytes);
       const base64Salt = bytesToBase64(salt);
       
-      debugLog("Prepared registration data:", {
+      console.log("Registration data prepared:", {
         usernameLength: username.length,
         publicKeyB64Length: base64PublicKey.length,
         encryptedKeyB64Length: base64EncryptedPrivateKey.length,
@@ -807,7 +890,7 @@ document.addEventListener("DOMContentLoaded", async function () {
       );
       
       if (!response || !response.success) {
-        debugLog("Registration failed:", response?.error);
+        console.error("Registration failed:", response?.error);
         alert("Registration failed: " + (response?.error?.message || "Unknown error"));
         registerBtn.disabled = false;
         return;
@@ -819,7 +902,7 @@ document.addEventListener("DOMContentLoaded", async function () {
       localStorage.setItem('wave_auth_token', tokenData.access_token);
       localStorage.setItem('wave_username', username);
       
-      debugLog("Registration successful, setting up user session");
+      console.log("Registration successful, setting up user session");
       
       // Set up user session
       currentUser = username;
@@ -840,8 +923,7 @@ document.addEventListener("DOMContentLoaded", async function () {
       alert("Registration successful! You are now logged in.");
       
     } catch (error) {
-      debugLog("Registration error:", error);
-      console.error("Registration failed:", error);
+      console.error("Registration error:", error);
       alert("Registration failed: " + error.message);
     } finally {
       registerBtn.disabled = false;
@@ -1861,11 +1943,252 @@ document.addEventListener("DOMContentLoaded", async function () {
 });
 
 // Add a diagnostic button that will be hidden but can be activated from console
-const diagnosticButton = document.createElement('button');
-diagnosticButton.id = 'run-diagnostics';
-diagnosticButton.style.display = 'none';
-diagnosticButton.textContent = 'Run Diagnostics';
-diagnosticButton.addEventListener('click', window.runDiagnostics);
-document.body.appendChild(diagnosticButton);
+// Add this at the bottom of your popup.js file
+async function diagnoseRegistrationIssue() {
+  // Create a test environment
+  const debugElement = document.createElement('div');
+  debugElement.style.position = 'fixed';
+  debugElement.style.top = '10px';
+  debugElement.style.right = '10px';
+  debugElement.style.backgroundColor = 'rgba(0,0,0,0.8)';
+  debugElement.style.color = 'white';
+  debugElement.style.padding = '10px';
+  debugElement.style.borderRadius = '5px';
+  debugElement.style.maxWidth = '400px';
+  debugElement.style.maxHeight = '80vh';
+  debugElement.style.overflow = 'auto';
+  debugElement.style.zIndex = '9999';
+  debugElement.style.fontSize = '12px';
+  debugElement.style.fontFamily = 'monospace';
+  
+  // Add a title
+  const title = document.createElement('h3');
+  title.textContent = 'Wave Registration Debug';
+  title.style.marginTop = '0';
+  debugElement.appendChild(title);
+  
+  // Add status area
+  const statusArea = document.createElement('pre');
+  statusArea.style.whiteSpace = 'pre-wrap';
+  debugElement.appendChild(statusArea);
+  
+  // Add action buttons container
+  const actionContainer = document.createElement('div');
+  actionContainer.style.marginTop = '10px';
+  actionContainer.style.display = 'flex';
+  actionContainer.style.gap = '10px';
+  debugElement.appendChild(actionContainer);
+  
+  // Add test encrypt/decrypt button
+  const testBtn = document.createElement('button');
+  testBtn.textContent = 'Test Encryption';
+  testBtn.style.flex = '1';
+  testBtn.addEventListener('click', testEncryptDecrypt);
+  actionContainer.appendChild(testBtn);
+  
+  // Add a close button
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = 'Close';
+  closeBtn.style.flex = '1';
+  closeBtn.addEventListener('click', () => document.body.removeChild(debugElement));
+  actionContainer.appendChild(closeBtn);
+  
+  document.body.appendChild(debugElement);
+  
+  // Function to log to the status area
+  function logStatus(message) {
+    const timestamp = new Date().toLocaleTimeString();
+    statusArea.textContent += `[${timestamp}] ${message}\n`;
+    console.log(`[DEBUG] ${message}`);
+  }
+  
+  // Test encryption and decryption
+  async function testEncryptDecrypt() {
+    logStatus("Testing encryption and decryption...");
+    
+    try {
+      // Ensure OQS is loaded
+      let oqsInstance;
+      try {
+        logStatus("Loading OQS library...");
+        oqsInstance = await ensureOQSLoaded();
+        logStatus("✅ OQS library loaded successfully");
+      } catch (error) {
+        logStatus(`❌ ERROR: Failed to load OQS: ${error.message}`);
+        return;
+      }
+      
+      // Generate a test keypair
+      try {
+        const kem = new oqsInstance.KeyEncapsulation("Kyber512");
+        const keypair = await kem.generate_keypair();
+        logStatus(`✅ Generated keypair: Public ${keypair.publicKey.length} bytes, Private ${keypair.secretKey.length} bytes`);
+        
+        // Test encapsulation
+        const { ciphertext, sharedSecret } = await kem.encapSecret(keypair.publicKey);
+        logStatus(`✅ Encapsulated shared secret: ${sharedSecret.length} bytes`);
+        
+        // Test decapsulation
+        await kem.loadSecretKey(keypair.secretKey);
+        const decapsulated = await kem.decapSecret(ciphertext);
+        
+        // Check if decapsulated matches original
+        let match = decapsulated.length === sharedSecret.length;
+        if (match) {
+          for (let i = 0; i < decapsulated.length; i++) {
+            if (decapsulated[i] !== sharedSecret[i]) {
+              match = false;
+              break;
+            }
+          }
+        }
+        
+        if (match) {
+          logStatus("✅ Decapsulation successful - shared secrets match!");
+        } else {
+          logStatus("❌ Decapsulation failed - shared secrets don't match");
+        }
+        
+        // Test message encryption/decryption
+        const testMessage = "Hello, this is a test message!";
+        const messageBytes = new TextEncoder().encode(testMessage);
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        
+        logStatus("Testing AES-GCM encryption with the shared secret...");
+        
+        // Import the key for encryption
+        const cryptoKey = await crypto.subtle.importKey(
+          "raw",
+          sharedSecret,
+          { name: "AES-GCM" },
+          false,
+          ["encrypt", "decrypt"]
+        );
+        
+        // Encrypt
+        const encrypted = await crypto.subtle.encrypt(
+          { name: "AES-GCM", iv },
+          cryptoKey,
+          messageBytes
+        );
+        
+        // Decrypt
+        const decrypted = await crypto.subtle.decrypt(
+          { name: "AES-GCM", iv },
+          cryptoKey,
+          encrypted
+        );
+        
+        const decryptedText = new TextDecoder().decode(decrypted);
+        
+        if (decryptedText === testMessage) {
+          logStatus(`✅ Message encryption/decryption successful!`);
+          logStatus(`   Original: "${testMessage}"`);
+          logStatus(`   Decrypted: "${decryptedText}"`);
+        } else {
+          logStatus(`❌ Message decryption failed!`);
+          logStatus(`   Original: "${testMessage}"`);
+          logStatus(`   Decrypted: "${decryptedText}"`);
+        }
+        
+        // Test private key encryption
+        const password = "test123";
+        const salt = crypto.getRandomValues(new Uint8Array(16));
+        
+        logStatus("Testing private key encryption...");
+        
+        // Derive key from password
+        const encoder = new TextEncoder();
+        const keyMaterial = await crypto.subtle.importKey(
+          "raw",
+          encoder.encode(password),
+          { name: "PBKDF2" },
+          false,
+          ["deriveBits", "deriveKey"]
+        );
+        
+        const derivedKey = await crypto.subtle.deriveKey(
+          {
+            name: "PBKDF2",
+            salt: salt,
+            iterations: 100000,
+            hash: "SHA-256"
+          },
+          keyMaterial,
+          { name: "AES-GCM", length: 256 },
+          false,
+          ["encrypt", "decrypt"]
+        );
+        
+        // Use exactly 12 bytes for the IV
+        const privKeyIv = new Uint8Array(12);
+        privKeyIv.set(salt.slice(0, 12));
+        
+        // Encrypt the private key
+        const encryptedPrivateKey = await crypto.subtle.encrypt(
+          { name: "AES-GCM", iv: privKeyIv },
+          derivedKey,
+          keypair.secretKey
+        );
+        
+        const encryptedPrivateKeyBytes = new Uint8Array(encryptedPrivateKey);
+        
+        logStatus(`Private key encryption: Original ${keypair.secretKey.length} bytes → Encrypted ${encryptedPrivateKeyBytes.length} bytes`);
+        
+        if (encryptedPrivateKeyBytes.length > 1600) {
+          logStatus(`❌ WARNING: Encrypted size (${encryptedPrivateKeyBytes.length} bytes) exceeds server validation limit (1600 bytes)`);
+          logStatus(`   You should update the server's Kyber512PrivateKeyMaxSize to at least ${encryptedPrivateKeyBytes.length} bytes`);
+        } else {
+          logStatus(`✅ Encrypted size (${encryptedPrivateKeyBytes.length} bytes) is within server limits`);
+        }
+        
+        // Try to decrypt the private key
+        const decryptedPrivateKey = await crypto.subtle.decrypt(
+          { name: "AES-GCM", iv: privKeyIv },
+          derivedKey,
+          encryptedPrivateKey
+        );
+        
+        if (decryptedPrivateKey.byteLength === keypair.secretKey.length) {
+          logStatus(`✅ Private key decryption successful!`);
+        } else {
+          logStatus(`❌ Private key decryption failed - size mismatch`);
+        }
+        
+      } catch (error) {
+        logStatus(`❌ ERROR during cryptographic testing: ${error.message}`);
+      }
+    } catch (error) {
+      logStatus(`❌ FATAL ERROR: ${error.message}`);
+    }
+  }
+  
+  // Start diagnostics
+  async function runDiagnostics() {
+    try {
+      logStatus("Starting registration diagnostics...");
+      
+      // Check OQS library
+      try {
+        const oqsInstance = await ensureOQSLoaded();
+        logStatus("✅ OQS library loaded successfully");
+      } catch (error) {
+        logStatus(`❌ ERROR: Failed to load OQS: ${error.message}`);
+        logStatus("Please click the 'Test Encryption' button to try again");
+        return;
+      }
+      
+      logStatus("\nRegistration diagnostics completed.");
+      logStatus("Click 'Test Encryption' to run more detailed tests.");
+      
+    } catch (error) {
+      logStatus(`❌ ERROR: ${error.message}`);
+    }
+  }
+  
+  // Run the diagnostics
+  runDiagnostics();
+}
 
-console.log("Diagnostics tool loaded. Run window.runDiagnostics() in console to diagnose issues.");
+// Make it available in the console
+window.diagnoseRegistrationIssue = diagnoseRegistrationIssue;
