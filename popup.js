@@ -1,4 +1,4 @@
-// popup.js - Completely overhauled version with fixes
+// popup.js - Diagnostic version with enhanced logging
 import createOQSModule from "./liboqs.js";
 import WaveClient from "./waveClient.js";
 
@@ -13,7 +13,14 @@ let allMessages = [];
 let contactsMap = {};         // { publicKey: { nickname } }
 let selectedContact = null;   // The recipient's public key (base64)
 
+// DIAGNOSTIC: Create a diagnostic log function to centralize logging
+function diagnosticLog(context, data) {
+  console.log(`[DIAGNOSTIC] ${context}:`, data);
+}
+
 document.addEventListener("DOMContentLoaded", async function () {
+  diagnosticLog("App Initialization", "Starting application initialization");
+  
   // Initialize the API client
   apiClient = new WaveClient("http://localhost:8080");
   
@@ -21,12 +28,14 @@ document.addEventListener("DOMContentLoaded", async function () {
   const savedToken = localStorage.getItem('wave_auth_token');
   if (savedToken) {
     apiClient.setToken(savedToken);
+    diagnosticLog("Auth", "Loaded saved token from localStorage");
   }
   
   // Initialize the OQS WASM Module
   try {
+    diagnosticLog("OQS", "Starting OQS WASM library initialization");
     oqs = await createOQSModule();
-    console.log("OQS WASM library loaded successfully");
+    diagnosticLog("OQS", "OQS WASM library loaded successfully");
   } catch (error) {
     console.error("Failed to initialize the OQS library:", error);
     alert("Error loading encryption modules. See console for details.");
@@ -42,8 +51,14 @@ document.addEventListener("DOMContentLoaded", async function () {
         throw new Error("Unsupported algorithm: " + algorithm);
       }
       this.algorithm = algorithm;
+      diagnosticLog("OQS", `Created KeyEncapsulation instance for ${algorithm}`);
     }
     async encapSecret(recipientPublicKeyBytes) {
+      diagnosticLog("OQS Encap", {
+        operation: "encapSecret starting",
+        publicKeyLength: recipientPublicKeyBytes.length
+      });
+      
       const pubKeySize = recipientPublicKeyBytes.length;
       const recipientPtr = oqs._malloc(pubKeySize);
       oqs.HEAPU8.set(recipientPublicKeyBytes, recipientPtr);
@@ -51,29 +66,62 @@ document.addEventListener("DOMContentLoaded", async function () {
       const sharedSecretSize = 32; // Expected for Kyber512.
       const ciphertextPtr = oqs._malloc(ciphertextSize);
       const sharedSecretPtr = oqs._malloc(sharedSecretSize);
+      
+      diagnosticLog("OQS Encap", {
+        status: "calling C function",
+        recipientPtr, 
+        ciphertextSize, 
+        sharedSecretSize
+      });
+      
       const ret = oqs._OQS_KEM_kyber_512_encaps(ciphertextPtr, sharedSecretPtr, recipientPtr);
+      
       if (ret !== 0) {
+        diagnosticLog("OQS Encap", {
+          status: "failed",
+          errorCode: ret
+        });
+        
         oqs._free(recipientPtr);
         oqs._free(ciphertextPtr);
         oqs._free(sharedSecretPtr);
         throw new Error("Encapsulation failed with error code " + ret);
       }
+      
       const ciphertext = new Uint8Array(oqs.HEAPU8.buffer, ciphertextPtr, ciphertextSize);
       const sharedSecret = new Uint8Array(oqs.HEAPU8.buffer, sharedSecretPtr, sharedSecretSize);
       const ciphertextCopy = new Uint8Array(ciphertext);
       const sharedSecretCopy = new Uint8Array(sharedSecret);
+      
+      diagnosticLog("OQS Encap", {
+        status: "success",
+        ciphertextLength: ciphertextCopy.length,
+        sharedSecretLength: sharedSecretCopy.length
+      });
+      
       oqs._free(recipientPtr);
       oqs._free(ciphertextPtr);
       oqs._free(sharedSecretPtr);
       return { ciphertext: ciphertextCopy, sharedSecret: sharedSecretCopy };
     }
     async loadSecretKey(secretKeyBytes) {
+      diagnosticLog("OQS", {
+        operation: "loadSecretKey",
+        secretKeyLength: secretKeyBytes.length
+      });
       this.secretKey = secretKeyBytes;
     }
     async decapSecret(ciphertext) {
       if (!this.secretKey) {
         throw new Error("Secret key not loaded.");
       }
+      
+      diagnosticLog("OQS Decap", {
+        operation: "decapSecret starting",
+        ciphertextLength: ciphertext.length,
+        secretKeyLength: this.secretKey.length
+      });
+      
       const ciphertextSize = ciphertext.length;
       const ciphertextPtr = oqs._malloc(ciphertextSize);
       oqs.HEAPU8.set(ciphertext, ciphertextPtr);
@@ -82,15 +130,35 @@ document.addEventListener("DOMContentLoaded", async function () {
       oqs.HEAPU8.set(this.secretKey, secretKeyPtr);
       const sharedSecretSize = 32;
       const sharedSecretPtr = oqs._malloc(sharedSecretSize);
+      
+      diagnosticLog("OQS Decap", {
+        status: "calling C function", 
+        ciphertextSize,
+        secretKeySize
+      });
+      
       const ret = oqs._OQS_KEM_kyber_512_decaps(sharedSecretPtr, ciphertextPtr, secretKeyPtr);
+      
       if (ret !== 0) {
+        diagnosticLog("OQS Decap", {
+          status: "failed",
+          errorCode: ret
+        });
+        
         oqs._free(ciphertextPtr);
         oqs._free(secretKeyPtr);
         oqs._free(sharedSecretPtr);
         throw new Error("Decapsulation failed with error code " + ret);
       }
+      
       const sharedSecret = new Uint8Array(oqs.HEAPU8.buffer, sharedSecretPtr, sharedSecretSize);
       const sharedSecretCopy = new Uint8Array(sharedSecret);
+      
+      diagnosticLog("OQS Decap", {
+        status: "success", 
+        sharedSecretLength: sharedSecretCopy.length
+      });
+      
       oqs._free(ciphertextPtr);
       oqs._free(secretKeyPtr);
       oqs._free(sharedSecretPtr);
@@ -109,7 +177,7 @@ document.addEventListener("DOMContentLoaded", async function () {
       throw new Error("OQS library not loaded");
     }
     
-    console.log("Generating Kyber keypair...");
+    diagnosticLog("Key Generation", "Generating Kyber keypair...");
     
     try {
       // For consistent testing, create keys of expected size
@@ -117,14 +185,18 @@ document.addEventListener("DOMContentLoaded", async function () {
       const publicKey = crypto.getRandomValues(new Uint8Array(900)); // Slightly larger for safety
       const secretKey = crypto.getRandomValues(new Uint8Array(1300)); // Larger to account for encryption overhead
       
-      console.log("Keypair generated successfully");
+      diagnosticLog("Key Generation", {
+        status: "success",
+        publicKeyLength: publicKey.length,
+        secretKeyLength: secretKey.length
+      });
       
       return {
         publicKey: publicKey, 
         secretKey: secretKey
       };
     } catch (error) {
-      console.error("Error generating keypair:", error);
+      diagnosticLog("Key Generation Error", error);
       throw error;
     }
   }
@@ -411,7 +483,15 @@ document.addEventListener("DOMContentLoaded", async function () {
       }
       
       try {
-        console.log("Sending message to:", selectedContact.substring(0, 15) + "...");
+        // DIAGNOSTIC: Log message sending attempt with full details
+        diagnosticLog("Message Sending", {
+          currentPubKey: currentPubKey ? (currentPubKey.substring(0, 20) + "...") : "null",
+          recipientPubKey: selectedContact ? (selectedContact.substring(0, 20) + "...") : "null", 
+          messageLength: messageText.length,
+          hasOQS: Boolean(oqs),
+          hasPrivateKey: Boolean(currentPrivateKey)
+        });
+
         sendMessageBtn.disabled = true;
         
         if (!oqs) {
@@ -422,14 +502,21 @@ document.addEventListener("DOMContentLoaded", async function () {
         
         // --- Recipient encryption ---
         const recipientPublicKeyBytes = base64ToBytes(selectedContact);
-        console.log("Recipient public key length:", recipientPublicKeyBytes.length);
+        diagnosticLog("Message Encryption", {
+          step: "Starting recipient encryption",
+          publicKeyLength: recipientPublicKeyBytes.length
+        });
         
         let kemRecipient;
         let ciphertext, sharedSecret;
         try {
           kemRecipient = new oqs.KeyEncapsulation("Kyber512");
           ({ ciphertext, sharedSecret } = await kemRecipient.encapSecret(recipientPublicKeyBytes));
-          console.log("Recipient encryption successful");
+          diagnosticLog("Message Encryption", {
+            step: "Recipient encryption successful",
+            ciphertextLength: ciphertext.length,
+            sharedSecretLength: sharedSecret.length
+          });
         } finally {
           if (kemRecipient && kemRecipient.free) {
             kemRecipient.free();
@@ -440,10 +527,20 @@ document.addEventListener("DOMContentLoaded", async function () {
         let kemSender;
         let sender_ciphertext, sender_sharedSecret;
         try {
+          diagnosticLog("Message Encryption", {
+            step: "Starting sender encryption",
+            senderPubKeyLength: currentPubKey ? base64ToBytes(currentPubKey).length : 0
+          });
+          
           kemSender = new oqs.KeyEncapsulation("Kyber512");
           ({ ciphertext: sender_ciphertext, sharedSecret: sender_sharedSecret } =
              await kemSender.encapSecret(base64ToBytes(currentPubKey)));
-          console.log("Sender encryption successful");
+          
+          diagnosticLog("Message Encryption", {
+            step: "Sender encryption successful",
+            ciphertextLength: sender_ciphertext.length,
+            sharedSecretLength: sender_sharedSecret.length
+          });
         } finally {
           if (kemSender && kemSender.free) {
             kemSender.free();
@@ -451,18 +548,52 @@ document.addEventListener("DOMContentLoaded", async function () {
         }
         
         if (![16, 24, 32].includes(sharedSecret.length)) {
+          diagnosticLog("Message Encryption", {
+            error: "Invalid AES key length (recipient)",
+            length: sharedSecret.length
+          });
           throw new Error("Invalid AES key length (recipient): " + sharedSecret.length);
         }
         if (![16, 24, 32].includes(sender_sharedSecret.length)) {
+          diagnosticLog("Message Encryption", {
+            error: "Invalid AES key length (sender)",
+            length: sender_sharedSecret.length
+          });
           throw new Error("Invalid AES key length (sender): " + sender_sharedSecret.length);
         }
         
         const recipient_nonce = crypto.getRandomValues(new Uint8Array(12));
         const sender_nonce = crypto.getRandomValues(new Uint8Array(12));
+        
+        diagnosticLog("Message Encryption", {
+          step: "Performing AES-GCM encryption",
+          recipientNonceLength: recipient_nonce.length,
+          senderNonceLength: sender_nonce.length
+        });
+        
         const ciphertextMsg = await aesGcmEncryptJS(sharedSecret, recipient_nonce, new TextEncoder().encode(messageText));
         const sender_ciphertextMsg = await aesGcmEncryptJS(sender_sharedSecret, sender_nonce, new TextEncoder().encode(messageText));
         
-        console.log("Message encrypted successfully, sending to server...");
+        diagnosticLog("Message Encryption", {
+          step: "AES-GCM encryption complete",
+          recipientCiphertextLength: ciphertextMsg.length,
+          senderCiphertextLength: sender_ciphertextMsg.length
+        });
+        
+        // DIAGNOSTIC: Show detailed request being sent
+        const apiRequest = {
+          recipientPubKey: selectedContact.substring(0, 20) + "...",
+          ciphertextKEM: bytesToBase64(ciphertext).substring(0, 20) + "...",
+          ciphertextMsgLength: ciphertextMsg.length,
+          nonceLength: recipient_nonce.length,
+          senderCiphertextKEMLength: sender_ciphertext.length,
+          senderCiphertextMsgLength: sender_ciphertextMsg.length,
+          senderNonceLength: sender_nonce.length
+        };
+        diagnosticLog("Message Sending", {
+          step: "Sending to API",
+          request: apiRequest
+        });
         
         try {
           const response = await apiClient.sendMessage(
@@ -475,13 +606,20 @@ document.addEventListener("DOMContentLoaded", async function () {
             bytesToBase64(sender_nonce)
           );
           
+          // DIAGNOSTIC: Log full response
+          diagnosticLog("Message Sending", {
+            step: "API response received",
+            success: response?.success,
+            error: response?.error,
+            messageId: response?.data?.message_id
+          });
+          
           if (!response || !response.success) {
             alert("Failed to send message: " + (response?.error?.message || "Unknown error"));
             sendMessageBtn.disabled = false;
             return;
           }
           
-          console.log("Message sent successfully! ID:", response.data.message_id);
           messageTextInput.value = "";
           
           // Force a delay before loading messages to ensure server has processed
@@ -492,11 +630,19 @@ document.addEventListener("DOMContentLoaded", async function () {
             sendMessageBtn.disabled = false;
           }, 500);
         } catch (error) {
+          diagnosticLog("Message Sending", {
+            step: "API error",
+            error: error.message
+          });
           console.error("Message sending failed:", error);
           alert("Failed to send message: " + error.message);
           sendMessageBtn.disabled = false;
         }
       } catch (error) {
+        diagnosticLog("Message Sending", {
+          step: "Encryption error",
+          error: error.message
+        });
         console.error("Encryption failed:", error);
         alert("Encryption failed: " + error.message);
         sendMessageBtn.disabled = false;
@@ -515,9 +661,18 @@ document.addEventListener("DOMContentLoaded", async function () {
     }
     
     try {
+      diagnosticLog("Authentication", {
+        action: "login",
+        username: username
+      });
+      
       const response = await apiClient.login(username);
       
       if (!response || !response.success) {
+        diagnosticLog("Authentication", {
+          action: "login failed",
+          error: response?.error?.message || "Unknown error"
+        });
         alert("Login failed: " + (response?.error?.message || "Unknown error"));
         return;
       }
@@ -526,6 +681,12 @@ document.addEventListener("DOMContentLoaded", async function () {
       apiClient.setToken(tokenData.access_token);
       localStorage.setItem('wave_auth_token', tokenData.access_token);
       localStorage.setItem('wave_username', username);
+      
+      diagnosticLog("Authentication", {
+        action: "login successful",
+        username: username,
+        tokenReceived: Boolean(tokenData.access_token)
+      });
       
       currentUser = username;
       currentPassword = password;
@@ -538,6 +699,10 @@ document.addEventListener("DOMContentLoaded", async function () {
       await loadContacts();
       await loadAllMessages();
     } catch (error) {
+      diagnosticLog("Authentication", {
+        action: "login error",
+        error: error.message
+      });
       console.error("Login failed:", error);
       alert("Login failed: " + error.message);
     }
@@ -553,6 +718,11 @@ document.addEventListener("DOMContentLoaded", async function () {
     }
     
     try {
+      diagnosticLog("Registration", {
+        action: "starting registration",
+        username: username
+      });
+      
       // Generate proper key data with sizes that match server expectations
       const salt = crypto.getRandomValues(new Uint8Array(16));
       
@@ -563,7 +733,18 @@ document.addEventListener("DOMContentLoaded", async function () {
         const keypair = await generateKyberKeypair();
         publicKey = keypair.publicKey;
         privateKey = keypair.secretKey;
+        
+        diagnosticLog("Registration", {
+          action: "keypair generation successful",
+          publicKeyLength: publicKey.length,
+          privateKeyLength: privateKey.length,
+          saltLength: salt.length
+        });
       } catch (e) {
+        diagnosticLog("Registration", {
+          action: "keypair generation failed",
+          error: e.message
+        });
         console.error("Failed to generate Kyber keypair, using placeholder:", e);
         // Use placeholder keys with correct sizes
         publicKey = crypto.getRandomValues(new Uint8Array(900));  // Between 800-1000 bytes
@@ -599,13 +780,10 @@ document.addEventListener("DOMContentLoaded", async function () {
       // Convert the ArrayBuffer to Uint8Array
       const encryptedBytes = new Uint8Array(encryptedPrivateKey);
       
-      // Log the sizes for debugging
-      console.log("Registration data details:", {
-        publicKeyLength: publicKey.length,
-        privateKeyLength: privateKey.length,
-        saltLength: salt.length,
-        encryptedPrivateKeyLength: encryptedBytes.length,
-        iv: bytesToBase64(iv)
+      diagnosticLog("Registration", {
+        action: "private key encryption complete",
+        ivLength: iv.length,
+        encryptedBytesLength: encryptedBytes.length
       });
       
       // Register the user
@@ -615,6 +793,12 @@ document.addEventListener("DOMContentLoaded", async function () {
         bytesToBase64(encryptedBytes),
         bytesToBase64(salt)
       );
+      
+      diagnosticLog("Registration", {
+        action: "registration response received",
+        success: response?.success,
+        error: response?.error?.message
+      });
       
       if (!response || !response.success) {
         if (response?.error?.message?.includes("User already exists")) {
@@ -629,6 +813,11 @@ document.addEventListener("DOMContentLoaded", async function () {
       apiClient.setToken(tokenData.access_token);
       localStorage.setItem('wave_auth_token', tokenData.access_token);
       localStorage.setItem('wave_username', username);
+      
+      diagnosticLog("Registration", {
+        action: "registration successful",
+        tokenReceived: Boolean(tokenData.access_token)
+      });
       
       alert("Registration successful! You are now logged in.");
       currentUser = username;
@@ -645,6 +834,10 @@ document.addEventListener("DOMContentLoaded", async function () {
       showSection(chatContainer);
       setActiveNavLink(tabChatLink);
     } catch (error) {
+      diagnosticLog("Registration", {
+        action: "registration error",
+        error: error.message
+      });
       console.error("Registration failed:", error);
       alert("Registration failed: " + error.message);
     }
@@ -660,7 +853,19 @@ document.addEventListener("DOMContentLoaded", async function () {
     }
     
     try {
+      diagnosticLog("Contacts", {
+        action: "adding contact",
+        nickname: nickname,
+        publicKeyLength: contact_public_key.length
+      });
+      
       const response = await apiClient.addContact(contact_public_key, nickname);
+      
+      diagnosticLog("Contacts", {
+        action: "contact add response",
+        success: response?.success,
+        error: response?.error?.message
+      });
       
       if (!response || !response.success) {
         alert("Failed to add contact: " + (response?.error?.message || "Unknown error"));
@@ -672,6 +877,10 @@ document.addEventListener("DOMContentLoaded", async function () {
       contactNicknameInput.value = "";
       await loadContacts();
     } catch (error) {
+      diagnosticLog("Contacts", {
+        action: "add contact error",
+        error: error.message
+      });
       console.error("Add contact failed:", error);
       alert("Failed to add contact: " + error.message);
     }
@@ -679,6 +888,10 @@ document.addEventListener("DOMContentLoaded", async function () {
 
   contactSelect.addEventListener("change", function () {
     selectedContact = contactSelect.value;
+    diagnosticLog("Chat", {
+      action: "contact selected",
+      selectedContact: selectedContact ? selectedContact.substring(0, 20) + "..." : "none"
+    });
     renderMessages();
   });
 
@@ -733,16 +946,35 @@ document.addEventListener("DOMContentLoaded", async function () {
   
   async function fetchPublicKey() {
     try {
+      diagnosticLog("Keys", {
+        action: "fetching public key",
+        username: currentUser
+      });
+      
       const response = await apiClient.getPublicKey(currentUser);
       
       if (!response || !response.success) {
+        diagnosticLog("Keys", {
+          action: "public key fetch failed",
+          error: response?.error?.message
+        });
         publicKeyDisplay.value = "No public key found.";
         return;
       }
       
       currentPubKey = response.data.public_key;
+      diagnosticLog("Keys", {
+        action: "public key fetched",
+        publicKeyLength: currentPubKey.length,
+        publicKeyPreview: currentPubKey.substring(0, 20) + "..."
+      });
+      
       publicKeyDisplay.value = currentPubKey;
     } catch (error) {
+      diagnosticLog("Keys", {
+        action: "public key fetch error",
+        error: error.message
+      });
       console.error("Fetch public key failed:", error);
       publicKeyDisplay.value = "Error fetching public key";
     }
@@ -750,9 +982,18 @@ document.addEventListener("DOMContentLoaded", async function () {
   
   async function loadPrivateKey() {
     try {
+      diagnosticLog("Keys", {
+        action: "loading private key",
+        hasPassword: Boolean(currentPassword)
+      });
+      
       const response = await apiClient.getPrivateKey();
       
       if (!response || !response.success) {
+        diagnosticLog("Keys", {
+          action: "private key load failed",
+          error: response?.error?.message
+        });
         console.warn("Error loading encrypted private key:", response?.error?.message || "Unknown error");
         return;
       }
@@ -761,27 +1002,64 @@ document.addEventListener("DOMContentLoaded", async function () {
       const salt = base64ToBytes(data.salt);
       const encKey = base64ToBytes(data.encrypted_private_key);
       const iv = salt.slice(0, 12); // Use first 12 bytes of salt as IV
-      console.log("loadPrivateKey: salt length =", salt.length, "iv length =", iv.length, "ciphertext length =", encKey.length);
+      
+      diagnosticLog("Keys", {
+        action: "loaded encrypted private key",
+        saltLength: salt.length,
+        ivLength: iv.length,
+        encryptedKeyLength: encKey.length
+      });
     
       try {
         const derivedKey = await deriveAesKeyFromPassword(currentPassword, salt);
         currentPrivateKey = await aesGcmDecrypt(derivedKey, iv, encKey);
+        
         if (!currentPrivateKey) {
+          diagnosticLog("Keys", {
+            action: "private key decryption failed",
+            reason: "Decryption returned null"
+          });
           throw new Error("Decryption returned null, possibly due to an incorrect password.");
         }
-        console.log("Private key decrypted successfully, length:", currentPrivateKey.length);
+        
+        diagnosticLog("Keys", {
+          action: "private key decrypted successfully",
+          privateKeyLength: currentPrivateKey.length
+        });
       } catch (e) {
+        diagnosticLog("Keys", {
+          action: "private key decryption failed",
+          error: e.message
+        });
+        
         alert("Failed to decrypt private key. Please check your password.");
         currentPassword = prompt("Enter your password to unlock your account:");
         if (currentPassword) {
+          diagnosticLog("Keys", {
+            action: "retrying private key decryption with new password"
+          });
+          
           const derivedKey = await deriveAesKeyFromPassword(currentPassword, salt);
           currentPrivateKey = await aesGcmDecrypt(derivedKey, iv, encKey);
+          
           if (!currentPrivateKey) {
+            diagnosticLog("Keys", {
+              action: "private key decryption retry failed"
+            });
             alert("Decryption failed again. Please try re-logging in.");
+          } else {
+            diagnosticLog("Keys", {
+              action: "private key decryption retry succeeded",
+              privateKeyLength: currentPrivateKey.length
+            });
           }
         }
       }
     } catch (error) {
+      diagnosticLog("Keys", {
+        action: "load private key error",
+        error: error.message
+      });
       console.error("Load private key failed:", error);
       alert("Failed to load private key: " + error.message);
     }
@@ -807,13 +1085,29 @@ document.addEventListener("DOMContentLoaded", async function () {
   
   async function aesGcmDecrypt(aesKey, iv, ciphertext) {
     try {
+      diagnosticLog("Crypto", {
+        action: "AES-GCM decrypt",
+        ivLength: iv.length,
+        ciphertextLength: ciphertext.length
+      });
+      
       const plainBuffer = await crypto.subtle.decrypt(
         { name: "AES-GCM", iv: iv, tagLength: 128 },
         aesKey,
         ciphertext
       );
+      
+      diagnosticLog("Crypto", {
+        action: "AES-GCM decrypt successful",
+        plaintextLength: plainBuffer.byteLength
+      });
+      
       return new Uint8Array(plainBuffer);
     } catch (e) {
+      diagnosticLog("Crypto", {
+        action: "AES-GCM decrypt failed",
+        error: e.message
+      });
       console.error("AES-GCM decryption failed:", e);
       return null;
     }
@@ -824,6 +1118,14 @@ document.addEventListener("DOMContentLoaded", async function () {
       if (![16, 24, 32].includes(keyBytes.length)) {
         throw new Error("Invalid AES key length: " + keyBytes.length);
       }
+      
+      diagnosticLog("Crypto", {
+        action: "AES-GCM encrypt",
+        keyLength: keyBytes.length,
+        ivLength: ivBytes.length,
+        plaintextLength: plaintext.length
+      });
+      
       const key = await crypto.subtle.importKey(
         "raw",
         keyBytes,
@@ -836,8 +1138,18 @@ document.addEventListener("DOMContentLoaded", async function () {
         key,
         plaintext
       );
+      
+      diagnosticLog("Crypto", {
+        action: "AES-GCM encrypt successful",
+        ciphertextLength: ciphertext.byteLength
+      });
+      
       return new Uint8Array(ciphertext);
     } catch (error) {
+      diagnosticLog("Crypto", {
+        action: "AES-GCM encrypt failed",
+        error: error.message
+      });
       console.error("AES-GCM encryption failed:", error);
       throw error;
     }
@@ -845,9 +1157,17 @@ document.addEventListener("DOMContentLoaded", async function () {
   
   async function loadContacts() {
     try {
+      diagnosticLog("Contacts", {
+        action: "loading contacts"
+      });
+      
       const response = await apiClient.getContacts();
       
       if (!response || !response.success) {
+        diagnosticLog("Contacts", {
+          action: "load contacts failed",
+          error: response?.error?.message
+        });
         console.warn("Failed to load contacts:", response?.error?.message || "Unknown error");
         return;
       }
@@ -862,8 +1182,17 @@ document.addEventListener("DOMContentLoaded", async function () {
         };
       }
       
+      diagnosticLog("Contacts", {
+        action: "contacts loaded",
+        count: contacts.length
+      });
+      
       renderContacts();
     } catch (error) {
+      diagnosticLog("Contacts", {
+        action: "load contacts error",
+        error: error.message
+      });
       console.error("Load contacts failed:", error);
     }
   }
@@ -871,6 +1200,12 @@ document.addEventListener("DOMContentLoaded", async function () {
   // UPDATED: renderContacts with avatars
   function renderContacts() {
     contactsDiv.innerHTML = "";
+    
+    diagnosticLog("UI", {
+      action: "rendering contacts",
+      contactCount: Object.keys(contactsMap).length
+    });
+    
     for (const pubKey in contactsMap) {
       const { nickname } = contactsMap[pubKey];
       const div = document.createElement("div");
@@ -899,16 +1234,33 @@ document.addEventListener("DOMContentLoaded", async function () {
   
   async function removeContact(pubKey) {
     try {
+      diagnosticLog("Contacts", {
+        action: "removing contact",
+        publicKey: pubKey.substring(0, 20) + "..."
+      });
+      
       const response = await apiClient.deleteContact(pubKey);
       
       if (!response || !response.success) {
+        diagnosticLog("Contacts", {
+          action: "remove contact failed",
+          error: response?.error?.message
+        });
         alert("Failed to remove contact: " + (response?.error?.message || "Unknown error"));
         return;
       }
       
+      diagnosticLog("Contacts", {
+        action: "contact removed successfully"
+      });
+      
       alert("Contact removed!");
       await loadContacts();
     } catch (error) {
+      diagnosticLog("Contacts", {
+        action: "remove contact error",
+        error: error.message
+      });
       console.error("Remove contact failed:", error);
       alert("Failed to remove contact: " + error.message);
     }
@@ -916,35 +1268,59 @@ document.addEventListener("DOMContentLoaded", async function () {
   
   async function loadAllMessages() {
     try {
-      console.log("Loading all messages...");
+      diagnosticLog("Messages", {
+        action: "loading all messages"
+      });
+      
       const response = await apiClient.getMessages();
       
       if (!response || !response.success) {
+        diagnosticLog("Messages", {
+          action: "load messages failed",
+          error: response?.error?.message
+        });
         console.warn("Failed to load messages:", response?.error?.message || "Unknown error");
         allMessages = [];
         return;
       }
       
       allMessages = response.data.messages || [];
-      console.log(`Loaded ${allMessages.length} messages successfully`);
       
-      // Log a sample message for debugging if available
+      diagnosticLog("Messages", {
+        action: "messages loaded",
+        count: allMessages.length,
+        firstMessageId: allMessages.length > 0 ? allMessages[0].message_id : "none"
+      });
+      
+      // DIAGNOSTIC: Log individual message details for the first few messages
       if (allMessages.length > 0) {
-        console.log("Sample message:", {
-          id: allMessages[0].message_id,
-          sender: allMessages[0].sender_pubkey.substring(0, 15) + "...",
-          recipient: allMessages[0].recipient_pubkey.substring(0, 15) + "...",
-          hasSenderFields: Boolean(
-            allMessages[0].sender_ciphertext_kem && 
-            allMessages[0].sender_ciphertext_msg && 
-            allMessages[0].sender_nonce
-          )
-        });
+        for (let i = 0; i < Math.min(3, allMessages.length); i++) {
+          const msg = allMessages[i];
+          diagnosticLog("Message Details", {
+            index: i,
+            id: msg.message_id,
+            sender: msg.sender_pubkey ? (msg.sender_pubkey.substring(0, 20) + "...") : "none",
+            recipient: msg.recipient_pubkey ? (msg.recipient_pubkey.substring(0, 20) + "...") : "none",
+            hasCiphertextKEM: Boolean(msg.ciphertext_kem),
+            hasCiphertextMsg: Boolean(msg.ciphertext_msg),
+            hasNonce: Boolean(msg.nonce),
+            hasSenderFields: Boolean(
+              msg.sender_ciphertext_kem && 
+              msg.sender_ciphertext_msg && 
+              msg.sender_nonce
+            ),
+            timestamp: msg.timestamp
+          });
+        }
       }
       
       populateContactDropdown();
       renderMessages();
     } catch (error) {
+      diagnosticLog("Messages", {
+        action: "load messages error",
+        error: error.message
+      });
       console.error("Load messages failed:", error);
       allMessages = [];
     }
@@ -953,6 +1329,13 @@ document.addEventListener("DOMContentLoaded", async function () {
   // UPDATED: populateContactDropdown with avatars
   function populateContactDropdown() {
     const partners = new Set();
+    
+    diagnosticLog("UI", {
+      action: "populating contact dropdown",
+      messageCount: allMessages.length,
+      currentPubKey: currentPubKey ? (currentPubKey.substring(0, 20) + "...") : "none"
+    });
+    
     for (const msg of allMessages) {
       if (msg.sender_pubkey && msg.sender_pubkey !== currentPubKey) {
         partners.add(msg.sender_pubkey);
@@ -964,6 +1347,12 @@ document.addEventListener("DOMContentLoaded", async function () {
     for (const pubKey in contactsMap) {
       partners.add(pubKey);
     }
+    
+    diagnosticLog("UI", {
+      action: "contact partners found",
+      partnerCount: partners.size
+    });
+    
     contactSelect.innerHTML = `<option value="">Select a contact...</option>`;
     for (const partner of partners) {
       let nickname = "Unknown user";
@@ -994,18 +1383,38 @@ document.addEventListener("DOMContentLoaded", async function () {
       return;
     }
 
-    console.log("Rendering messages for contact:", selectedContact);
-    console.log("Total messages available:", allMessages.length);
+    diagnosticLog("UI", {
+      action: "rendering messages",
+      selectedContact: selectedContact ? (selectedContact.substring(0, 20) + "...") : "none",
+      currentPubKey: currentPubKey ? (currentPubKey.substring(0, 20) + "...") : "none",
+      totalMessages: allMessages.length
+    });
 
     let conversation = allMessages.filter((m) => {
       const isPartOfConversation = (
         (m.sender_pubkey === selectedContact && m.recipient_pubkey === currentPubKey) ||
         (m.sender_pubkey === currentPubKey && m.recipient_pubkey === selectedContact)
       );
+      
+      // DIAGNOSTIC: Log the filtering process for a few messages
+      if (m.sender_pubkey === selectedContact || m.recipient_pubkey === selectedContact) {
+        diagnosticLog("Message Filtering", {
+          messageId: m.message_id,
+          sender: m.sender_pubkey.substring(0, 20) + "...",
+          isCurrentUser: m.sender_pubkey === currentPubKey,
+          recipient: m.recipient_pubkey.substring(0, 20) + "...",
+          isSelectedContact: m.recipient_pubkey === selectedContact,
+          isPartOfConversation: isPartOfConversation
+        });
+      }
+      
       return isPartOfConversation;
     });
     
-    console.log("Filtered conversation messages:", conversation.length);
+    diagnosticLog("UI", {
+      action: "message filtering complete",
+      filteredMessageCount: conversation.length
+    });
     
     if (conversation.length === 0) {
       messagesDiv.innerHTML = "<p>No messages in this conversation yet.</p>";
@@ -1026,7 +1435,10 @@ document.addEventListener("DOMContentLoaded", async function () {
       return aTime - bTime;
     });
 
-    console.log("Rendering", deduped.length, "messages after deduplication");
+    diagnosticLog("UI", {
+      action: "message deduplication complete", 
+      dedupedMessageCount: deduped.length
+    });
 
     for (const msg of deduped) {
       const div = document.createElement("div");
@@ -1055,13 +1467,29 @@ document.addEventListener("DOMContentLoaded", async function () {
         div.innerHTML = `<strong>Unknown user: ${msg.sender_pubkey.substring(0, 10)}...</strong>: ${text}`;
         div.appendChild(addBtn);
       } else {
-        text = await decryptPQMessage(msg);
-        const senderLabel = msg.sender_pubkey === currentPubKey
-          ? "You"
-          : (contactsMap[msg.sender_pubkey]
-            ? contactsMap[msg.sender_pubkey].nickname
-            : ("Unknown user: " + msg.sender_pubkey.substring(0, 10) + "..."));
-        div.innerHTML = `<strong>${senderLabel}</strong>: ${text}`;
+        try {
+          diagnosticLog("Message Decryption", {
+            action: "starting decryption",
+            messageId: msg.message_id,
+            isSentByMe: msg.sender_pubkey === currentPubKey
+          });
+          
+          text = await decryptPQMessage(msg);
+          
+          const senderLabel = msg.sender_pubkey === currentPubKey
+            ? "You"
+            : (contactsMap[msg.sender_pubkey]
+              ? contactsMap[msg.sender_pubkey].nickname
+              : ("Unknown user: " + msg.sender_pubkey.substring(0, 10) + "..."));
+          div.innerHTML = `<strong>${senderLabel}</strong>: ${text}`;
+        } catch (error) {
+          diagnosticLog("Message Decryption", {
+            action: "decryption error in render",
+            messageId: msg.message_id,
+            error: error.message
+          });
+          div.innerHTML = `<strong>Error</strong>: Could not decrypt message: ${error.message}`;
+        }
       }
 
       const timeString = new Date(msg.timestamp).toLocaleString();
@@ -1079,14 +1507,27 @@ document.addEventListener("DOMContentLoaded", async function () {
   
   async function decryptPQMessage(msg) {
     if (!oqs) {
+      diagnosticLog("Message Decryption", {
+        messageId: msg.message_id,
+        error: "OQS library not loaded"
+      });
       console.warn("OQS library is still loading. Retrying decryption later...");
       return "[Encrypted message]";
     }
     
+    // DIAGNOSTIC: Log exact values for matching
+    diagnosticLog("Message Decryption", {
+      messageId: msg.message_id,
+      senderPubKey: msg.sender_pubkey ? (msg.sender_pubkey.substring(0, 20) + "...") : "null",
+      currentPubKey: currentPubKey ? (currentPubKey.substring(0, 20) + "...") : "null",
+      exactMatch: msg.sender_pubkey === currentPubKey,
+      privateKeyAvailable: Boolean(currentPrivateKey)
+    });
+    
     // Determine if this is a message sent by current user or received from someone else
     const isSentByMe = msg.sender_pubkey === currentPubKey;
     
-    console.log("Attempting to decrypt message:", {
+    diagnosticLog("Message Decryption", {
       messageId: msg.message_id,
       isSentByMe: isSentByMe,
       hasRequiredFields: Boolean(currentPrivateKey && msg.ciphertext_kem && msg.ciphertext_msg && msg.nonce),
@@ -1094,6 +1535,10 @@ document.addEventListener("DOMContentLoaded", async function () {
     });
     
     if (!currentPrivateKey) {
+      diagnosticLog("Message Decryption", {
+        messageId: msg.message_id,
+        error: "Missing private key"
+      });
       console.warn("Decryption failed: Missing private key");
       return "[Private key unavailable]";
     }
@@ -1103,7 +1548,19 @@ document.addEventListener("DOMContentLoaded", async function () {
       
       // If message was sent by current user, use sender fields for decryption
       if (isSentByMe) {
+        diagnosticLog("Message Decryption", {
+          messageId: msg.message_id,
+          decryptionPath: "using sender fields",
+          hasSenderCiphertextKem: Boolean(msg.sender_ciphertext_kem),
+          hasSenderCiphertextMsg: Boolean(msg.sender_ciphertext_msg),
+          hasSenderNonce: Boolean(msg.sender_nonce),
+        });
+        
         if (!msg.sender_ciphertext_kem || !msg.sender_ciphertext_msg || !msg.sender_nonce) {
+          diagnosticLog("Message Decryption", {
+            messageId: msg.message_id,
+            error: "Missing sender encryption fields"
+          });
           console.warn("Missing sender encryption fields for sent message");
           return "[Message data incomplete]";
         }
@@ -1113,7 +1570,19 @@ document.addEventListener("DOMContentLoaded", async function () {
         ciphertextBytes = base64ToBytes(msg.sender_ciphertext_msg);
       } else {
         // Message received from someone else
+        diagnosticLog("Message Decryption", {
+          messageId: msg.message_id,
+          decryptionPath: "using recipient fields",
+          hasCiphertextKem: Boolean(msg.ciphertext_kem),
+          hasCiphertextMsg: Boolean(msg.ciphertext_msg),
+          hasNonce: Boolean(msg.nonce),
+        });
+        
         if (!msg.ciphertext_kem || !msg.ciphertext_msg || !msg.nonce) {
+          diagnosticLog("Message Decryption", {
+            messageId: msg.message_id,
+            error: "Missing recipient encryption fields"
+          });
           console.warn("Missing recipient encryption fields for received message");
           return "[Message data incomplete]";
         }
@@ -1123,12 +1592,13 @@ document.addEventListener("DOMContentLoaded", async function () {
         ciphertextBytes = base64ToBytes(msg.ciphertext_msg);
       }
 
-      console.log("Decryption details:", {
+      diagnosticLog("Message Decryption", {
         messageId: msg.message_id, 
         isSentByMe: isSentByMe,
         kemLength: ciphertextKem.length,
         nonceLength: nonceBytes.length,
-        ciphertextLength: ciphertextBytes.length
+        ciphertextLength: ciphertextBytes.length,
+        privateKeyLength: currentPrivateKey.length
       });
 
       let kem;
@@ -1138,7 +1608,11 @@ document.addEventListener("DOMContentLoaded", async function () {
         await kem.loadSecretKey(currentPrivateKey);
         sharedSecret = await kem.decapSecret(ciphertextKem);
         
-        console.log(`Shared secret derived (length: ${sharedSecret.length})`);
+        diagnosticLog("Message Decryption", {
+          messageId: msg.message_id,
+          status: "shared secret derived",
+          sharedSecretLength: sharedSecret.length
+        });
       } finally {
         if (kem && kem.free) {
           kem.free();
@@ -1148,14 +1622,29 @@ document.addEventListener("DOMContentLoaded", async function () {
       const plaintextBuffer = await aesGcmDecryptJS(sharedSecret, nonceBytes, ciphertextBytes);
 
       if (!plaintextBuffer) {
+        diagnosticLog("Message Decryption", {
+          messageId: msg.message_id,
+          error: "AES-GCM decryption failed"
+        });
         console.warn("AES-GCM decryption failed for message:", msg.message_id);
         return "[Decryption failed]";
       }
 
       const text = new TextDecoder().decode(plaintextBuffer);
-      console.log(`Successfully decrypted message: "${text.substring(0, 10)}..."`);
+      
+      diagnosticLog("Message Decryption", {
+        messageId: msg.message_id,
+        status: "success",
+        textLength: text.length,
+        textPreview: text.substring(0, 10) + "..."
+      });
+      
       return text;
     } catch (err) {
+      diagnosticLog("Message Decryption", {
+        messageId: msg.message_id,
+        error: err.message
+      });
       console.error("Message decryption error:", err);
       return "[Decryption error: " + err.message + "]";
     }
@@ -1164,16 +1653,30 @@ document.addEventListener("DOMContentLoaded", async function () {
   async function aesGcmDecryptJS(keyBytes, ivBytes, ciphertext) {
     try {
       if (!keyBytes || !ivBytes || !ciphertext) {
+        diagnosticLog("Crypto", {
+          action: "AES-GCM decrypt JS input validation failed",
+          hasKey: Boolean(keyBytes),
+          hasIV: Boolean(ivBytes),
+          hasCiphertext: Boolean(ciphertext)
+        });
         throw new Error("Decryption failed: Missing key, IV, or ciphertext.");
       }
+      
       if (![16, 24, 32].includes(keyBytes.length)) {
+        diagnosticLog("Crypto", {
+          action: "AES-GCM decrypt JS key length error",
+          keyLength: keyBytes.length
+        });
         throw new Error("Invalid AES key length: " + keyBytes.length);
       }
-      console.log("AES-GCM Decryption Inputs:", {
-        key: bytesToBase64(keyBytes),
-        iv: bytesToBase64(ivBytes),
-        ciphertext: bytesToBase64(ciphertext),
+      
+      diagnosticLog("Crypto", {
+        action: "AES-GCM decrypt JS",
+        keyLength: keyBytes.length,
+        ivLength: ivBytes.length,
+        ciphertextLength: ciphertext.length
       });
+      
       const key = await crypto.subtle.importKey(
         "raw",
         keyBytes,
@@ -1181,13 +1684,26 @@ document.addEventListener("DOMContentLoaded", async function () {
         false,
         ["decrypt"]
       );
+      
       const decrypted = await crypto.subtle.decrypt(
         { name: "AES-GCM", iv: ivBytes, tagLength: 128 },
         key,
         ciphertext
       );
+      
+      diagnosticLog("Crypto", {
+        action: "AES-GCM decrypt JS successful",
+        plaintextLength: decrypted.byteLength
+      });
+      
       return new Uint8Array(decrypted);
     } catch (e) {
+      diagnosticLog("Crypto", {
+        action: "AES-GCM decrypt JS failed",
+        error: e.message,
+        isDOMException: e instanceof DOMException
+      });
+      
       console.error("AES-GCM decryption failed:", e);
       if (e instanceof DOMException) {
         console.error("Decryption failed: Possibly incorrect key, IV, or corrupted ciphertext.");
@@ -1215,12 +1731,21 @@ document.addEventListener("DOMContentLoaded", async function () {
   
   async function doLogout() {
     try {
+      diagnosticLog("Authentication", {
+        action: "logging out",
+        username: currentUser
+      });
+      
       await apiClient.logout();
       
       // Always clear local state
       apiClient.clearToken();
       localStorage.removeItem('wave_auth_token');
       localStorage.removeItem('wave_username');
+      
+      diagnosticLog("Authentication", {
+        action: "logout successful"
+      });
       
       currentUser = null;
       currentPassword = null;
@@ -1236,6 +1761,10 @@ document.addEventListener("DOMContentLoaded", async function () {
       tabChatLink.classList.remove("active");
       tabSettingsLink.classList.remove("active");
     } catch (error) {
+      diagnosticLog("Authentication", {
+        action: "logout error",
+        error: error.message
+      });
       console.error("Logout failed:", error);
       
       // Still clear local state on error
@@ -1256,16 +1785,31 @@ document.addEventListener("DOMContentLoaded", async function () {
     // Check for saved token
     const savedToken = localStorage.getItem('wave_auth_token');
     if (savedToken) {
+      diagnosticLog("Session", {
+        action: "checking saved session",
+        hasToken: Boolean(savedToken)
+      });
+      
       apiClient.setToken(savedToken);
       
       try {
         // Try to get server information
         const response = await apiClient.ping();
         
+        diagnosticLog("Session", {
+          action: "ping response",
+          success: response?.success
+        });
+        
         if (response && response.success) {
           // Get user data if available
           const username = localStorage.getItem('wave_username');
           if (username) {
+            diagnosticLog("Session", {
+              action: "username found",
+              username: username
+            });
+            
             currentUser = username;
             userLabel.textContent = `Logged in as ${currentUser}`;
             
@@ -1274,10 +1818,18 @@ document.addEventListener("DOMContentLoaded", async function () {
               currentPassword = prompt("Enter your password to unlock your account:");
               if (!currentPassword) {
                 // If user cancels password prompt, logout
+                diagnosticLog("Session", {
+                  action: "password prompt canceled"
+                });
                 await doLogout();
                 return;
               }
             }
+            
+            diagnosticLog("Session", {
+              action: "session restored",
+              username: currentUser
+            });
             
             await fetchPublicKey();
             await loadPrivateKey();
@@ -1290,10 +1842,18 @@ document.addEventListener("DOMContentLoaded", async function () {
           }
         }
       } catch (error) {
+        diagnosticLog("Session", {
+          action: "session validation failed",
+          error: error.message
+        });
         console.error("Session validation failed:", error);
       }
       
       // If we reach here, token is invalid or user data is missing
+      diagnosticLog("Session", {
+        action: "session invalid, clearing"
+      });
+      
       apiClient.clearToken();
       localStorage.removeItem('wave_auth_token');
       localStorage.removeItem('wave_username');
